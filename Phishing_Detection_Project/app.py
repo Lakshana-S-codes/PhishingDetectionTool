@@ -141,3 +141,4 @@ if st.button("Check URL"):
         st.success("✅ Safe URL (Looks Legitimate)")
         for r in reasons:
             st.write("- " + r)
+
