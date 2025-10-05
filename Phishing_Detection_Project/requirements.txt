@@ -1,4 +1,9 @@
 streamlit
 requests
 fuzzywuzzy
+pandas
+numpy
+scikit-learn
+joblib
+
 
