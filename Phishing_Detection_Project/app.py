@@ -7,15 +7,22 @@ import base64
 from fuzzywuzzy import fuzz
 import joblib
 import numpy as np
+from pathlib import Path
 
 # --------------------------
 # Config
 # --------------------------
-API_KEY = "63a673d2aa23d2ea58efbea9042316dd3d5e1ce90a90f4144a38f29a840256ef"  # Optional: put your VirusTotal API key
+API_KEY = "63a673d2aa23d2ea58efbea9042316dd3d5e1ce90a90f4144a38f29a840256ef"  # Optional
 VT_URL = "https://www.virustotal.com/api/v3/urls"
 
 trusted_domains = ["google.com", "paypal.com", "facebook.com", "amazon.com",
                    "microsoft.com", "instagram.com", "apple.com"]
+
+# --------------------------
+# Paths
+# --------------------------
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_PATH = BASE_DIR / "model.pkl"
 
 # --------------------------
 # Helper Functions
@@ -33,7 +40,7 @@ def check_with_virustotal(url):
             return True, "⚠️ VirusTotal check skipped (no API key)"
         url_id = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
         headers = {"x-apikey": API_KEY}
-        response = requests.get(f"{VT_URL}/{url_id}", headers=headers)
+        response = requests.get(f"{VT_URL}/{url_id}", headers=headers, timeout=10)
         if response.status_code == 200:
             stats = response.json()["data"]["attributes"]["last_analysis_stats"]
             malicious = stats.get("malicious", 0)
@@ -48,14 +55,15 @@ def check_with_virustotal(url):
         return True, f"⚠️ Error contacting VirusTotal: {str(e)}"
 
 def extract_features(url):
-    domain = urllib.parse.urlparse(url).netloc
+    parsed = urllib.parse.urlparse(url)
+    domain = parsed.netloc
     return [
-        int(any(c.isdigit() for c in domain)),      # Have_IP
-        len(url),                                   # URL_Length
-        int("@" in url),                            # Have_At
-        int("//" in url),                           # Double_Slash
-        int("-" in domain),                         # Prefix_Suffix
-        int("https" in url.lower()),                # SSLfinal_State
+        int(any(c.isdigit() for c in domain)),  # Have_IP
+        len(url),                               # URL_Length
+        int("@" in url),                        # Have_At
+        int("//" in url),                        # Double_Slash
+        int("-" in domain),                      # Prefix_Suffix
+        int("https" in url.lower()),             # SSLfinal_State
     ]
 
 def clean_url(url):
@@ -64,11 +72,25 @@ def clean_url(url):
     return url
 
 # --------------------------
+# Load model
+# --------------------------
+model = None
+if MODEL_PATH.exists():
+    try:
+        model = joblib.load(MODEL_PATH)
+    except Exception as e:
+        st.error(f"Error loading model.pkl: {e}")
+else:
+    st.warning("model.pkl not found. Please ensure it is in the same folder as app.py")
+
+# --------------------------
 # Streamlit UI
 # --------------------------
+st.set_page_config(page_title="Phishing Detection Tool", layout="centered")
 st.title("🔒 Phishing Detection Tool")
+st.markdown("Enter a URL below to check if it is suspicious using rules, VirusTotal, and ML prediction.")
 
-url_input = st.text_input("Enter website URL:")
+url_input = st.text_input("Enter website URL:", placeholder="example.com or https://example.com/path")
 
 if st.button("Check URL (All Methods)"):
     if not url_input:
@@ -124,18 +146,21 @@ if st.button("Check URL (All Methods)"):
         # ----------------------------
         # VirusTotal Check
         # ----------------------------
-        vt_safe, vt_message = check_with_virustotal(url_input)
+        with st.spinner("Checking VirusTotal..."):
+            vt_safe, vt_message = check_with_virustotal(url_input)
 
         # ----------------------------
         # ML Prediction
         # ----------------------------
         try:
             features = np.array(extract_features(url_input)).reshape(1, -1)
-            model = joblib.load("model.pkl")
-            prediction = model.predict(features)[0]
-            ml_result = "🟢 Legitimate URL" if prediction == 0 else "🔴 Phishing URL"
+            if model is None:
+                ml_result = "Model not available. Place model.pkl in app folder."
+            else:
+                prediction = model.predict(features)[0]
+                ml_result = "🟢 Legitimate URL" if prediction == 0 else "🔴 Phishing URL"
         except Exception as e:
-            ml_result = f"Error: {e}"
+            ml_result = f"Error during ML prediction: {e}"
 
         # ----------------------------
         # Display Results
@@ -152,4 +177,10 @@ if st.button("Check URL (All Methods)"):
         st.write(vt_message)
 
         st.subheader("🤖 ML Model Prediction")
-        st.success(ml_result)
+        if model is None:
+            st.error(ml_result)
+        else:
+            if "Phishing" in ml_result or "🔴" in ml_result:
+                st.error(ml_result)
+            else:
+                st.success(ml_result)
